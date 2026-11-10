@@ -1,0 +1,116 @@
+/* =========================================================================
+   5G NR Network KPI and Performance Dashboard
+   DAX measures for the Power BI model.
+
+   Model:
+     dim_cell[cell_id]  1 ── *  fact_signal_samples[cell_id]
+     dim_date[Date]     1 ── *  fact_signal_samples[date]
+
+   Paste each block into the Power BI "New measure" editor.
+   ========================================================================= */
+
+-- ── Signal quality ─────────────────────────────────────────────────────────
+Avg RSRP (dBm) = AVERAGE ( fact_signal_samples[rsrp_dbm] )
+
+Avg RSRQ (dB) = AVERAGE ( fact_signal_samples[rsrq_db] )
+
+Avg SINR (dB) = AVERAGE ( fact_signal_samples[sinr_db] )
+
+Avg CQI = AVERAGE ( fact_signal_samples[cqi] )
+
+P10 RSRP (dBm) = PERCENTILE.INC ( fact_signal_samples[rsrp_dbm], 0.10 )
+
+-- ── Throughput & load ──────────────────────────────────────────────────────
+Avg DL Throughput (Mbps) = AVERAGE ( fact_signal_samples[dl_throughput_mbps] )
+
+Avg UL Throughput (Mbps) = AVERAGE ( fact_signal_samples[ul_throughput_mbps] )
+
+Avg PRB Utilisation DL % = AVERAGE ( fact_signal_samples[prb_util_dl_pct] )
+
+Avg Latency (ms) = AVERAGE ( fact_signal_samples[latency_ms] )
+
+-- ── Accessibility, retainability, mobility ────────────────────────────────
+Accessibility % =
+VAR Attempts  = SUM ( fact_signal_samples[rrc_setup_attempts] )
+VAR Successes = SUM ( fact_signal_samples[rrc_setup_successes] )
+RETURN DIVIDE ( Successes, Attempts )
+
+Handover Success % =
+VAR Attempts  = SUM ( fact_signal_samples[handover_attempts] )
+VAR Successes = SUM ( fact_signal_samples[handover_successes] )
+RETURN DIVIDE ( Successes, Attempts )
+
+Drop Rate % =
+DIVIDE (
+    SUM ( fact_signal_samples[session_dropped] ),
+    COUNTROWS ( fact_signal_samples )
+)
+
+-- ── Coverage & quality compliance ─────────────────────────────────────────
+Good Coverage % =
+DIVIDE (
+    CALCULATE (
+        COUNTROWS ( fact_signal_samples ),
+        fact_signal_samples[coverage_class] = "Good"
+    ),
+    COUNTROWS ( fact_signal_samples )
+)
+
+Poor Coverage % =
+DIVIDE (
+    CALCULATE (
+        COUNTROWS ( fact_signal_samples ),
+        fact_signal_samples[coverage_class] = "Poor"
+    ),
+    COUNTROWS ( fact_signal_samples )
+)
+
+Good SINR % =
+DIVIDE (
+    CALCULATE (
+        COUNTROWS ( fact_signal_samples ),
+        fact_signal_samples[is_good_sinr] = TRUE ()
+    ),
+    COUNTROWS ( fact_signal_samples )
+)
+
+-- ── Composite health score (0-100) ────────────────────────────────────────
+Compliance Score =
+DIVIDE (
+    [Accessibility %] + [Handover Success %] + [Good Coverage %] + [Good SINR %],
+    4
+) * 100
+
+KPI Status =
+SWITCH (
+    TRUE (),
+    [Compliance Score] >= 90, "Healthy",
+    [Compliance Score] >= 75, "Watch",
+    "Critical"
+)
+
+KPI Status Colour =
+SWITCH (
+    [KPI Status],
+    "Healthy", "#2E7D32",
+    "Watch", "#F9A825",
+    "Critical", "#C62828"
+)
+
+-- ── Sample volume guard ───────────────────────────────────────────────────
+Sample Count = COUNTROWS ( fact_signal_samples )
+
+-- Hide KPI cards when a cell has too few samples to be meaningful.
+Reliable KPI Flag =
+IF ( [Sample Count] >= 50, 1, 0 )
+
+-- ── Date table (create as a calculated table, then Mark as date table) ────
+Date =
+ADDCOLUMNS (
+    CALENDAR ( MIN ( fact_signal_samples[date] ), MAX ( fact_signal_samples[date] ) ),
+    "Year", YEAR ( [Date] ),
+    "Month", FORMAT ( [Date], "mmm" ),
+    "Month Number", MONTH ( [Date] ),
+    "Weekday", FORMAT ( [Date], "ddd" ),
+    "Day", DAY ( [Date] )
+)
